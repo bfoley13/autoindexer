@@ -44,7 +44,7 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: PRESET_AUTO_INDEXER_REGISTRY_NAME
-              value: {{ .Values.presetAutoIndexerRegistryName | default "aimodelsregistrytest.azurecr.io" }}
+              value: {{ .Values.presetAutoIndexerRegistryName | default "mcr.microsoft.com/aks/kaito" }}
             - name: PRESET_AUTO_INDEXER_IMAGE_NAME
               value: {{ .Values.presetAutoIndexerImageName | default "kaito-autoindexer-service" }}
             - name: PRESET_AUTO_INDEXER_IMAGE_TAG
