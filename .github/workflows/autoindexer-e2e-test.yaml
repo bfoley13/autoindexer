@@ -31,7 +31,7 @@ jobs:
       - name: Wait for E2E - AutoIndexer workflow to start
         id: wait_start
         run: |
-          echo "Waiting for E2E workflow to start..."
+          echo "Waiting for E2E - AutoIndexer workflow to start..."
           for i in {1..30}; do
             runs=$(curl -s \
               -H "Authorization: Bearer ${{ github.token }}" \
