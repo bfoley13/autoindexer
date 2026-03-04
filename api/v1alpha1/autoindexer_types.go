@@ -80,7 +80,7 @@ type AutoIndexerSpec struct {
 type DataSourceSpec struct {
 	// Type specifies the data source type
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=Git;Static
+	// +kubebuilder:validation:Enum=Git;Static;Database
 	Type DataSourceType `json:"type"`
 
 	// Git defines configuration for Git repository data sources
@@ -90,15 +90,20 @@ type DataSourceSpec struct {
 	// Static defines configuration for static data sources
 	// +optional
 	Static *StaticDataSourceSpec `json:"static,omitempty"`
+
+	// Database defines configuration for database data sources (Kusto, SQL, etc.)
+	// +optional
+	Database *DatabaseDataSourceSpec `json:"database,omitempty"`
 }
 
 // DataSourceType defines the supported data source types
-// +kubebuilder:validation:Enum=Git;Static
+// +kubebuilder:validation:Enum=Git;Static;Database
 type DataSourceType string
 
 const (
-	DataSourceTypeGit    DataSourceType = "Git"
-	DataSourceTypeStatic DataSourceType = "Static"
+	DataSourceTypeGit      DataSourceType = "Git"
+	DataSourceTypeStatic   DataSourceType = "Static"
+	DataSourceTypeDatabase DataSourceType = "Database"
 )
 
 // GitDataSourceSpec defines Git repository configuration
@@ -161,24 +166,54 @@ const (
 	DriftRemediationStrategyIgnore DriftRemediationStrategy = "Ignore" // Ignore drift
 )
 
+// DatabaseLanguage defines the supported database query languages
+// +kubebuilder:validation:Enum=Kusto
+type DatabaseLanguage string
+
+const (
+	// DatabaseLanguageKusto represents Azure Data Explorer (Kusto Query Language)
+	DatabaseLanguageKusto DatabaseLanguage = "Kusto"
+)
+
+// DatabaseDataSourceSpec defines database data source configuration
+type DatabaseDataSourceSpec struct {
+	// Language specifies the query language
+	// +kubebuilder:validation:Required
+	Language DatabaseLanguage `json:"language"`
+
+	// InitialQuery is the complete query to run on first execution
+	// For Kusto: Must include cluster URL and database in the query
+	// +kubebuilder:validation:Required
+	InitialQuery string `json:"initialQuery"`
+
+	// IncrementalQuery is the query to run on subsequent executions
+	// +optional
+	IncrementalQuery string `json:"incrementalQuery,omitempty"`
+}
+
 // CredentialsSpec defines authentication credentials
 type CredentialsSpec struct {
 	// Type specifies the credential type
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=SecretRef
+	// +kubebuilder:validation:Enum=SecretRef;WorkloadIdentity
 	Type CredentialType `json:"type"`
 
 	// Secret reference containing credentials
 	// +optional
 	SecretRef *SecretKeyRef `json:"secretRef,omitempty"`
+
+	// Workload identity credentials
+	// +optional
+	WorkloadIdentity *WorkloadIdentity `json:"workloadIdentity,omitempty"`
 }
 
 // CredentialType defines the supported credential types
-// +kubebuilder:validation:Enum=SecretRef
+// +kubebuilder:validation:Enum=SecretRef;WorkloadIdentity
 type CredentialType string
 
 const (
-	CredentialTypeSecretRef CredentialType = "SecretRef"
+	CredentialTypeSecretRef        CredentialType = "SecretRef"
+	CredentialTypeWorkloadIdentity CredentialType = "WorkloadIdentity"
 )
 
 // SecretKeyRef references a key in a Secret
@@ -190,6 +225,46 @@ type SecretKeyRef struct {
 	// Key within the secret
 	// +kubebuilder:validation:Required
 	Key string `json:"key"`
+}
+
+// CloudProvider defines the supported cloud providers for workload identity
+// +kubebuilder:validation:Enum=Azure
+type CloudProvider string
+
+const (
+	CloudProviderAzure CloudProvider = "Azure"
+)
+
+// WorkloadIdentity references a workload identity configuration
+type WorkloadIdentity struct {
+	// CloudProvider specifies the cloud provider for the workload identity
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=Azure
+	CloudProvider CloudProvider `json:"cloudProvider"`
+
+	// AzureWorkloadIdentity contains Azure-specific workload identity details
+	// +optional
+	AzureWorkloadIdentity *AzureWorkloadIdentity `json:"azureWorkloadIdentity,omitempty"`
+}
+
+type AzureWorkloadIdentity struct {
+	// ServiceAccountName associated with the workload identity
+	// The controller will create a Kubernetes Service Account with this name and annotate it for Azure workload identity usage
+	// If the Service Account already exists, it will be used as is, but it must have the correct annotations for Azure workload identity
+	// +kubebuilder:validation:Required
+	ServiceAccountName string `json:"serviceAccountName"`
+
+	// Scope of the workload identity
+	// +kubebuilder:validation:Required
+	Scope string `json:"scope"`
+
+	// ClientID of the workload identity
+	// +kubebuilder:validation:Required
+	ClientID string `json:"clientID"`
+
+	// TenantID of the workload identity
+	// +kubebuilder:validation:Required
+	TenantID string `json:"tenantID,omitempty"`
 }
 
 // AutoIndexerStatus defines the observed state of AutoIndexer

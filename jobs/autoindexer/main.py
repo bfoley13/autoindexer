@@ -28,6 +28,9 @@ import time
 from typing import Any
 
 from autoindexer.config import ACCESS_SECRET, AUTOINDEXER_NAME, NAMESPACE
+from autoindexer.credential_provider.credential_provider import CredentialProvider
+from autoindexer.credential_provider.secret_credential_provider import SecretCredentialProvider
+from autoindexer.credential_provider.azure_workload_identity_provider import AzureWorkloadIdentityProvider
 from autoindexer.data_source_handler.git_handler import GitDataSourceHandler
 from autoindexer.data_source_handler.handler import DataSourceError
 from autoindexer.data_source_handler.static_handler import (
@@ -35,12 +38,10 @@ from autoindexer.data_source_handler.static_handler import (
 )
 from autoindexer.k8s.k8s_client import AutoIndexerK8sClient
 from autoindexer.rag.rag_client import KAITORAGClient
+from autoindexer.utils.log import configure_otel_logging
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Initialize OpenTelemetry logging with default configuration
+configure_otel_logging(namespace=NAMESPACE, autoindexer_name=AUTOINDEXER_NAME)
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +63,7 @@ class AutoIndexerJob:
         self.datasource_type = None
         self.datasource_config = None
         self.credentials_config = None
+        self.credential_provider = None
         
         # Initialize Kubernetes client for CRD interaction
         self.k8s_client = None
@@ -87,6 +89,9 @@ class AutoIndexerJob:
             raise ValueError("RAG engine endpoint must be configured via CRD or environment variables")
         self.rag_client = KAITORAGClient(self.ragengine_endpoint)
         
+        # Initialize credential provider
+        self.credential_provider = self._create_credential_provider()
+        
         # Initialize data source handler
         self.data_source_handler = self._create_data_source_handler()
         
@@ -110,6 +115,39 @@ class AutoIndexerJob:
             logger.warning(f"Failed to parse {key} as JSON: {e}")
             return None
 
+    def _create_credential_provider(self) -> CredentialProvider | None:
+        """Create the appropriate credential provider based on configuration."""
+        if not self.credentials_config:
+            logger.info("No credentials configuration found, will operate without authentication")
+            return None
+        
+        cred_type = self.credentials_config.get("type")
+        
+        if cred_type == "SecretRef":
+            # Use secret-based credentials (e.g., PAT tokens)
+            if self.access_secret:
+                logger.info("Using SecretCredentialProvider with token from environment")
+                return SecretCredentialProvider(token=self.access_secret)
+            else:
+                logger.warning("SecretRef credential type specified but ACCESS_SECRET not found")
+                return None
+        
+        elif cred_type == "WorkloadIdentity":
+            # Use Azure Workload Identity
+            workload_identity_config = self.credentials_config.get("workloadIdentityRef", {})
+            client_id = workload_identity_config.get("clientID")
+            tenant_id = workload_identity_config.get("tenantID")
+            
+            logger.info(f"Using AzureWorkloadIdentityProvider (client_id: {client_id}, tenant_id: {tenant_id})")
+            return AzureWorkloadIdentityProvider(
+                client_id=client_id,
+                tenant_id=tenant_id
+            )
+        
+        else:
+            logger.warning(f"Unknown credential type: {cred_type}")
+            return None
+
     def _create_data_source_handler(self):
         """Create the appropriate data source handler based on configuration."""
         if self.datasource_type.lower() == "static":
@@ -118,7 +156,7 @@ class AutoIndexerJob:
                 config=self.datasource_config or {},
                 rag_client=self.rag_client,
                 autoindexer_client=self.autoindexer_client,
-                credentials=self.access_secret
+                credentials=self.credential_provider
             )
         elif self.datasource_type.lower() == "git":
             return GitDataSourceHandler(
@@ -126,7 +164,17 @@ class AutoIndexerJob:
                 config=self.datasource_config or {},
                 rag_client=self.rag_client,
                 autoindexer_client=self.autoindexer_client,
-                credentials=self.access_secret
+                credentials=self.credential_provider
+            )
+        elif self.datasource_type.lower() == "database":
+            # Database type with KQL language support (formerly Kusto)
+            from autoindexer.data_source_handler.kusto_handler import KustoDataSourceHandler
+            return KustoDataSourceHandler(
+                index_name=self.index_name,
+                config=self.datasource_config or {},
+                rag_client=self.rag_client,
+                autoindexer_client=self.autoindexer_client,
+                credentials=self.credential_provider
             )
         else:
             raise ValueError(f"Unsupported data source type: {self.datasource_type}")
@@ -194,8 +242,23 @@ class AutoIndexerJob:
                     })
                     logger.info("Updated Static data source configuration from CRD")
                 
+                elif ds_config.get("database") and ds_config["type"] == "Database":
+                    database_config = ds_config["database"]
+                    self.datasource_config.update({
+                        "autoindexer_name": autoindexer_full_name,
+                        "language": database_config.get("language"),
+                        "initialQuery": database_config.get("initialQuery"),
+                        "incrementalQuery": database_config.get("incrementalQuery"),
+                    })
+                    logger.info(f"Updated Database data source configuration from CRD (language: {database_config.get('language')})")
+                
                 else:
                     raise ValueError("Unsupported or missing data source configuration in CRD")
+            
+            # Update credentials configuration from CRD
+            if crd_spec.get("credentials"):
+                self.credentials_config = crd_spec["credentials"]
+                logger.info(f"Using credentials configuration from CRD: type={self.credentials_config.get('type')}")
                 
         except Exception as e:
             logger.warning(f"Failed to apply CRD configuration: {e}")
@@ -359,9 +422,9 @@ def main():
     )
     
     args = parser.parse_args()
-    
-    # Set logging level
-    logging.getLogger().setLevel(getattr(logging, args.log_level))
+
+    # Reconfigure OpenTelemetry logging with specified log level
+    configure_otel_logging(args.log_level, namespace=NAMESPACE, autoindexer_name=AUTOINDEXER_NAME)
     
     try:
         job = AutoIndexerJob(dry_run=args.dry_run)

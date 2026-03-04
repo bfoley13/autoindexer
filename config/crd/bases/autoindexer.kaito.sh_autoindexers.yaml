@@ -82,16 +82,79 @@ spec:
                     allOf:
                     - enum:
                       - SecretRef
+                      - WorkloadIdentity
                     - enum:
                       - SecretRef
+                      - WorkloadIdentity
                     description: Type specifies the credential type
                     type: string
+                  workloadIdentity:
+                    description: Workload identity credentials
+                    properties:
+                      azureWorkloadIdentity:
+                        description: AzureWorkloadIdentity contains Azure-specific
+                          workload identity details
+                        properties:
+                          clientID:
+                            description: ClientID of the workload identity
+                            type: string
+                          scope:
+                            description: Scope of the workload identity
+                            type: string
+                          serviceAccountName:
+                            description: |-
+                              ServiceAccountName associated with the workload identity
+                              The controller will create a Kubernetes Service Account with this name and annotate it for Azure workload identity usage
+                              If the Service Account already exists, it will be used as is, but it must have the correct annotations for Azure workload identity
+                            type: string
+                          tenantID:
+                            description: TenantID of the workload identity
+                            type: string
+                        required:
+                        - clientID
+                        - scope
+                        - serviceAccountName
+                        type: object
+                      cloudProvider:
+                        allOf:
+                        - enum:
+                          - Azure
+                        - enum:
+                          - Azure
+                        description: CloudProvider specifies the cloud provider for
+                          the workload identity
+                        type: string
+                    required:
+                    - cloudProvider
+                    type: object
                 required:
                 - type
                 type: object
               dataSource:
                 description: DataSource defines where to retrieve documents for indexing
                 properties:
+                  database:
+                    description: Database defines configuration for database data
+                      sources (Kusto, SQL, etc.)
+                    properties:
+                      incrementalQuery:
+                        description: IncrementalQuery is the query to run on subsequent
+                          executions
+                        type: string
+                      initialQuery:
+                        description: |-
+                          InitialQuery is the complete query to run on first execution
+                          For Kusto: Must include cluster URL and database in the query
+                        type: string
+                      language:
+                        description: Language specifies the query language
+                        enum:
+                        - Kusto
+                        type: string
+                    required:
+                    - initialQuery
+                    - language
+                    type: object
                   git:
                     description: Git defines configuration for Git repository data
                       sources
@@ -145,9 +208,11 @@ spec:
                     - enum:
                       - Git
                       - Static
+                      - Database
                     - enum:
                       - Git
                       - Static
+                      - Database
                     description: Type specifies the data source type
                     type: string
                 required:
@@ -156,8 +221,9 @@ spec:
               driftRemediationPolicy:
                 default:
                   strategy: Manual
-                description: DriftRemediationPolicy defines how to handle detected
-                  drift between expected and actual document counts
+                description: |-
+                  DriftRemediationPolicy defines how to handle detected drift between expected and actual document counts within the index.
+                  Drift detection is only performed for AutoIndexers with a Schedule defined.
                 properties:
                   strategy:
                     allOf:

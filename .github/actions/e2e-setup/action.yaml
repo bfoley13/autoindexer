@@ -15,7 +15,7 @@ inputs:
   k8s_version:
     description: "the kubernetes version for the aks cluster"
     required: false
-    default: "1.31.10"
+    default: "1.32.0"
 
 outputs:
   cluster_name:

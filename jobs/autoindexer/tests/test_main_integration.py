@@ -131,7 +131,7 @@ class TestAutoIndexerJob:
                     config=expected_config, 
                     rag_client=mock_rag_client.return_value,
                     autoindexer_client=mock_k8s_client,
-                    credentials="test-secret"
+                    credentials=None
                 )
                 assert hasattr(service, 'data_source_handler')
                 assert service.data_source_handler == mock_static_handler.return_value
@@ -536,6 +536,8 @@ class TestMainFunction:
             mock_service_class.return_value = mock_service
             
             mock_logger = Mock()
+            # Mock the handlers attribute to be an empty list to support slicing
+            mock_logger.handlers = []
             mock_get_logger.return_value = mock_logger
             
             main()
