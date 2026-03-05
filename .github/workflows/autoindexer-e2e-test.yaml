@@ -76,38 +76,69 @@ jobs:
       - name: Build AutoIndexer Controller Image
         shell: bash
         run: |
-          az acr login --name ${{ env.REGISTRY }}
-          make docker-build-autoindexer
-        env:
-          REGISTRY: ${{ env.CLUSTER_NAME }}.azurecr.io
-      
-      - name: Build AutoIndexer Job Image
-        shell: bash
+          echo "pr_sha=${{ github.event.pull_request.head.sha }}" >> $GITHUB_OUTPUT
+          echo "start_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> $GITHUB_OUTPUT
+
+      - name: Wait for E2E - AutoIndexer workflow to start
+        id: wait_start
         run: |
-          az acr login --name ${{ env.REGISTRY }}
-          make docker-build-autoindexer-job
-        env:
-          REGISTRY: ${{ env.CLUSTER_NAME }}.azurecr.io
-      
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5.5.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-      
-      - name: Install Helm
-        uses: azure/setup-helm@v4
-      
-      - name: Install AutoIndexer helm chart
-        shell: bash
+          echo "Waiting for E2E - AutoIndexer workflow to start..."
+          for i in {1..30}; do
+            runs=$(curl -s \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs?event=pull_request&status=in_progress")
+
+            run_id=$(echo "$runs" | jq -r \
+              '.workflow_runs[] 
+               | select(.name == "E2E - AutoIndexer") 
+               | select(.head_sha == "'${{ steps.ctx.outputs.pr_sha }}'") 
+               | .id')
+
+            if [ "$run_id" != "" ] && [ "$run_id" != "null" ]; then
+              echo "Found E2E workflow run: $run_id"
+              echo "e2e_run_id=$run_id" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "Not found yet. Waiting..."
+            sleep 10
+          done
+
+          echo "Timed out waiting for E2E workflow to start"
+          exit 1
+
+      - name: Wait for E2E workflow to finish
+        id: wait_finish
         run: |
-          make az-patch-install-autoindexer-helm-e2e
-          kubectl wait --for=condition=available deploy "kaito-autoindexer" -n kaito-autoindexer --timeout=300s
-        env:
-          REGISTRY: ${{ env.CLUSTER_NAME }}.azurecr.io
-          AZURE_RESOURCE_GROUP: ${{ env.CLUSTER_NAME }}
-          AZURE_CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
-      
-      - name: Run e2e test
+          run_id=${{ steps.wait_start.outputs.e2e_run_id }}
+
+          echo "Waiting for E2E workflow (run_id=$run_id) to complete..."
+          
+          for i in {1..60}; do
+            run=$(curl -s \
+              -H "Authorization: Bearer ${{ github.token }}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id")
+
+            status=$(echo "$run" | jq -r '.status')
+            conclusion=$(echo "$run" | jq -r '.conclusion')
+
+            echo "Status: $status / Conclusion: $conclusion"
+
+            # If the child workflow is completed, exit loop
+            if [ "$status" == "completed" ]; then
+              echo "conclusion=$conclusion" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Timed out waiting for E2E workflow to finish"
+          exit 1
+
+      - name: Finalize monitor result
         run: |
           az aks get-credentials --name "${{ env.CLUSTER_NAME }}" --resource-group "${{ env.CLUSTER_NAME }}" --overwrite-existing
           make autoindexer-e2e-test
